@@ -63,7 +63,9 @@ static const size_t hook_field[] = {
 
 static int hook_id(uint64_t site) {
     for (size_t i = 0; i < sizeof hook_field / sizeof hook_field[0]; i++)
-        if (*(const uint64_t *)((const char *)g_ga + hook_field[i]) == site) return (int)i;
+        // gen.py passes the instruction's runtime address. Android shifts the
+        // guest down by GA_SHIFT; the table itself retains Switch addresses.
+        if (GA_AT(hook_field[i]) == site) return (int)i;
     return -1;
 }
 
