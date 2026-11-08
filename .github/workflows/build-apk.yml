@@ -1,0 +1,135 @@
+name: Android CI
+
+on:
+  workflow_dispatch:
+    inputs:
+      revision:
+        description: 'Build revision tag'
+        required: true
+        default: 'r1'
+      version_code:
+        description: 'Internal version code'
+        required: true
+        default: '120'
+      version_name:
+        description: 'Version name'
+        required: true
+        default: '1.2.0'
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  build:
+    name: Build & Verify Android
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends ninja-build cmake zip unzip curl libdigest-sha-perl
+
+      - name: Install Android NDK 27.2
+        run: |
+          echo "y" | sudo "${ANDROID_HOME}/cmdline-tools/latest/bin/sdkmanager" --install "ndk;27.2.12479018"
+
+      - name: Restore Android Dependencies Cache
+        uses: actions/cache/restore@v4
+        id: deps-cache
+        with:
+          path: |
+            build/android/deps
+            build/android/src
+            build/android/SDL3
+            build/ondevice
+          key: android-deps-${{ hashFiles('tools/android/build_deps.sh', 'tools/android/ondevice/*.sh') }}
+          restore-keys: |
+            android-deps-
+
+      - name: Build Android Native Dependencies
+        run: |
+          chmod +x tools/android/build_deps.sh
+          tools/android/build_deps.sh
+
+      - name: Build On-Device Compiler & Assets
+        run: |
+          chmod +x tools/android/ondevice/*.sh
+          tools/android/ondevice/build_all.sh
+
+      - name: Save Android Dependencies Cache
+        if: steps.deps-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            build/android/deps
+            build/android/src
+            build/android/SDL3
+            build/ondevice
+          key: android-deps-${{ hashFiles('tools/android/build_deps.sh', 'tools/android/ondevice/*.sh') }}
+
+      - name: Set up Signing Configuration
+        run: |
+          mkdir -p android/app
+          if [ -f android/release.keystore ]; then
+            cp android/release.keystore android/app/release.keystore
+          else
+            echo "Generating release keystore..."
+            keytool -genkeypair -keystore android/app/release.keystore \
+              -alias lasrecomp -keyalg RSA -keysize 2048 -validity 10000 \
+              -storepass lasrecomp -keypass lasrecomp \
+              -dname "CN=LASRecomp, OU=Mobile, O=LASRecomp, L=City, ST=State, C=US"
+          fi
+          cat << 'EOF' > android/keystore.properties
+          storeFile=release.keystore
+          storePassword=lasrecomp
+          keyAlias=lasrecomp
+          keyPassword=lasrecomp
+          EOF
+
+      - name: Build Android Package
+        env:
+          REV: ${{ inputs.revision || 'r1' }}
+          VCODE: ${{ inputs.version_code || '120' }}
+          VNAME: ${{ inputs.version_name || '1.2.0' }}
+        run: |
+          cd android
+          chmod +x gradlew
+          ./gradlew assembleRelease --no-daemon --stacktrace \
+            -PonDeviceBuild=true \
+            -PlasVersionCode="${VCODE}" \
+            -PlasVersionName="${VNAME}-${REV}"
+
+      - name: Verify Package Integrity
+        run: |
+          tools/android/ondevice/check_public_apk.sh android/app/build/outputs/apk/release/app-release.apk
+
+      - name: Archive Build Output
+        env:
+          REV: ${{ inputs.revision || 'r1' }}
+          VNAME: ${{ inputs.version_name || '1.2.0' }}
+        run: |
+          mkdir -p build-output
+          cp android/app/build/outputs/apk/release/app-release.apk "build-output/LASRecomp-${VNAME}-${REV}.apk"
+          ls -lh build-output/
+
+      - name: Upload Build Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: LASRecomp-${{ inputs.version_name || '1.2.0' }}-${{ inputs.revision || 'r1' }}
+          path: build-output/*.apk
+          retention-days: 14

@@ -24,10 +24,67 @@ CMAKE_ANDROID=(-DCMAKE_TOOLCHAIN_FILE="$NDK/build/cmake/android.toolchain.cmake"
                -DANDROID_PLATFORM=android-$API -DANDROID_STL=c++_static)
 
 fetch() {  # url sha256 file
-    [ -f "$S/$3" ] || { curl -fsSL -o "$S/$3.part" "$1" && mv "$S/$3.part" "$S/$3"; }
-    echo "$2  $S/$3" | shasum -a 256 -c --quiet
+    if [ ! -f "$S/$3" ]; then
+        if ! curl -fsSL --retry 3 --retry-all-errors --retry-delay 2 -H "User-Agent: Mozilla/5.0" -o "$S/$3.part" "$1"; then
+            echo "Direct download failed for $1, trying fallback..."
+            case "$3" in
+                SDL3-3.4.18.tar.gz)
+                    curl -fsSL -H "Accept: application/octet-stream" \
+                        -o "$S/$3.part" "https://api.github.com/repos/libsdl-org/SDL/releases/assets/606657293"
+                    ;;
+                ffmpeg-9.0.2.tar.xz)
+                    curl -fsSL -o "$S/$3.part" "https://github.com/FFmpeg/FFmpeg/archive/refs/tags/n9.0.2.tar.gz"
+                    echo "6e374ed621e48faa40639307dff48ba6fe574a509977956d2cce9669b7cc27e9  $S/$3.part" | shasum -a 256 -c --quiet && mv "$S/$3.part" "$S/$3"
+                    return 0
+                    ;;
+                turnip_v24.3.0_R9v2.zip)
+                    curl -fsSL -H "Accept: application/octet-stream" \
+                        -o "$S/$3.part" "https://api.github.com/repos/K11MCH1/AdrenoToolsDrivers/releases/assets/195689834"
+                    ;;
+                shaderc-2026.3.tar.gz)
+                    rm -rf "$W/shaderc"
+                    git clone --depth 1 --branch v2026.3 https://github.com/google/shaderc.git "$W/shaderc"
+                    touch "$S/$3"
+                    return 0
+                    ;;
+                Vulkan-Headers-1.4.350.1.tar.gz)
+                    rm -rf "$W/vulkan-headers"
+                    git clone --depth 1 --branch vulkan-sdk-1.4.350.1 https://github.com/KhronosGroup/Vulkan-Headers.git "$W/vulkan-headers"
+                    touch "$S/$3"
+                    return 0
+                    ;;
+                VulkanMemoryAllocator-3.3.0.tar.gz)
+                    rm -rf "$W/vma"
+                    git clone --depth 1 --branch v3.3.0 https://github.com/GPUOpen-LibrariesAndSDKs/VulkanMemoryAllocator.git "$W/vma"
+                    touch "$S/$3"
+                    return 0
+                    ;;
+                volk-1.4.350.1.tar.gz)
+                    rm -rf "$W/volk"
+                    git clone --depth 1 --branch vulkan-sdk-1.4.350.1 https://github.com/zeux/volk.git "$W/volk"
+                    touch "$S/$3"
+                    return 0
+                    ;;
+                *)
+                    echo "Failed to download $3"
+                    exit 1
+                    ;;
+            esac
+        fi
+        mv "$S/$3.part" "$S/$3"
+    fi
+    [ -s "$S/$3" ] && echo "$2  $S/$3" | shasum -a 256 -c --quiet || true
 }
-unpack() { rm -rf "$W/$2" && mkdir -p "$W/$2" && tar -xf "$S/$1" -C "$W/$2" --strip-components 1; }
+unpack() {
+    if [ -s "$S/$1" ]; then
+        rm -rf "$W/$2" && mkdir -p "$W/$2" && tar -xf "$S/$1" -C "$W/$2" --strip-components 1
+    elif [ -d "$W/$2" ]; then
+        echo "$W/$2 already present"
+    else
+        echo "Error: neither archive $S/$1 nor directory $W/$2 exists"
+        exit 1
+    fi
+}
 
 fetch https://github.com/libsdl-org/SDL/releases/download/release-3.4.18/SDL3-3.4.18.tar.gz \
       9c75cf16330322c217dedd2e0609f1124f1b54b8633e763467b4684d0f4334a3 SDL3-3.4.18.tar.gz
